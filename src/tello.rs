@@ -170,6 +170,8 @@ impl Tello {
 
     pub fn disconnect(&mut self) {
         self.running.store(true, Ordering::SeqCst);
+        self.state_thread = None;
+        self.command_thread = None;
     }
 
     pub fn send_command(&self, command: &str) {
