@@ -3,6 +3,8 @@ mod tello;
 #[macro_use]
 extern crate log;
 
+use std::io::{Cursor, SeekFrom, Write, Seek};
+
 fn main() {
     // enable logging
     let env = env_logger::Env::default()
