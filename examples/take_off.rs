@@ -1,8 +1,4 @@
 extern crate corroded_drone;
-
-#[macro_use]
-extern crate log;
-
 use std::time::Duration;
 
 fn main() {
@@ -11,6 +7,6 @@ fn main() {
     drone.connect();
 
     drone.take_off();
-    std::thread::sleep(Duration::from_secs(10));
+    std::thread::sleep(Duration::from_secs(2));
     drone.land();
 }
