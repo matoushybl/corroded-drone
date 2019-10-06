@@ -177,7 +177,7 @@ impl Tello {
     pub fn send_command(&self, command: &str) {
         let mut a = self.command_socket.clone();
         let mut socket = a.lock().unwrap();
-        socket.send_to(command.as_bytes(), "127.0.0.1:8889");
+        socket.send_to(command.as_bytes(), "192.168.10.1:8889");
     }
 
     pub fn get_state(&self) -> State {
