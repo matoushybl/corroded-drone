@@ -72,7 +72,7 @@ impl Flip {
             Flip::Left => 'l',
             Flip::Right => 'r',
             Flip::Forward => 'f',
-            Flip::Backward => 'r',
+            Flip::Backward => 'b',
         }
     }
 }
