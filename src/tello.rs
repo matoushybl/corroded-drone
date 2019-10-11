@@ -110,21 +110,23 @@ impl Tello {
         self.command_thread = Some(std::thread::spawn(move || {
             while command_running.load(Ordering::SeqCst) {
                 let mut buffer: [u8; 1500] = [0; 1500];
-                let socket = command_socket.lock().unwrap();
-                let result = socket.recv_from(&mut buffer);
-                match result {
-                    Ok((size, _)) => {
-                        let response = std::str::from_utf8(&buffer[..size])
-                            .unwrap_or_default()
-                            .trim();
-                        if response == "ok" {
-                            command_acked.store(true, Ordering::SeqCst);
+                {
+                    let socket = command_socket.lock().unwrap();
+                    let result = socket.recv_from(&mut buffer);
+                    match result {
+                        Ok((size, _)) => {
+                            let response = std::str::from_utf8(&buffer[..size])
+                                .unwrap_or_default()
+                                .trim();
+                            if response == "ok" {
+                                command_acked.store(true, Ordering::SeqCst);
+                            }
                         }
+                        Err(_) => { }
                     }
-                    Err(_) => { }
                 }
 
-                std::thread::sleep(Duration::from_millis(10));
+                std::thread::sleep(Duration::from_millis(20));
             }
         }));
 
@@ -134,46 +136,47 @@ impl Tello {
         self.state_thread = Some(std::thread::spawn(move || {
             while state_running.load(Ordering::SeqCst) {
                 let mut buffer: [u8; 1500] = [0; 1500];
-                let socket = state_socket.lock().unwrap();
+                {
+                    let socket = state_socket.lock().unwrap();
 
-                match socket.recv(&mut buffer) {
-                    Ok(size) => {
-                        let string = std::str::from_utf8(&buffer[..size - 1])
-                            .unwrap_or_default()
-                            .trim();
-                        let parts: Vec<&str> = string.split(";").collect();
+                    match socket.recv(&mut buffer) {
+                        Ok(size) => {
+                            let string = std::str::from_utf8(&buffer[..size - 1])
+                                .unwrap_or_default()
+                                .trim();
+                            let parts: Vec<&str> = string.split(";").collect();
 
-                        let mut parameter_map: HashMap<&str, &str> = HashMap::new();
-                        for parameter in &parts {
-                            if parameter.len() <= 1 || !parameter.contains(':') {
-                                continue;
+                            let mut parameter_map: HashMap<&str, &str> = HashMap::new();
+                            for parameter in &parts {
+                                if parameter.len() <= 1 || !parameter.contains(':') {
+                                    continue;
+                                }
+                                let parameter_parts: Vec<&str> = (*parameter).split(":").collect();
+
+                                parameter_map.insert(parameter_parts[0], parameter_parts[1]);
                             }
-                            let parameter_parts: Vec<&str> = (*parameter).split(":").collect();
 
-                            parameter_map.insert(parameter_parts[0], parameter_parts[1]);
+                            let mut state = state.lock().unwrap();
+                            state.roll = parameter_map["roll"].parse().unwrap();
+                            state.pitch = parameter_map["pitch"].parse().unwrap();
+                            state.yaw = parameter_map["yaw"].parse().unwrap();
+                            state.ground_velocity_x = parameter_map["vgx"].parse().unwrap();
+                            state.ground_acceleration_y = parameter_map["vgy"].parse().unwrap();
+                            state.ground_velocity_z = parameter_map["vgz"].parse().unwrap();
+                            state.temperature_minimum = parameter_map["templ"].parse().unwrap();
+                            state.temperature_maximum = parameter_map["temph"].parse().unwrap();
+                            state.tof_value = parameter_map["tof"].parse().unwrap();
+                            state.height = parameter_map["h"].parse().unwrap();
+                            state.battery_percentage = parameter_map["bat"].parse().unwrap();
+                            state.barometer_height = parameter_map["baro"].parse().unwrap();
+                            state.time = parameter_map["time"].parse().unwrap();
+                            state.ground_acceleration_x = parameter_map["agx"].parse().unwrap();
+                            state.ground_acceleration_y = parameter_map["agy"].parse().unwrap();
+                            state.ground_acceleration_z = parameter_map["agz"].parse().unwrap();
                         }
-
-                        let mut state = state.lock().unwrap();
-                        state.roll = parameter_map["roll"].parse().unwrap();
-                        state.pitch = parameter_map["pitch"].parse().unwrap();
-                        state.yaw = parameter_map["yaw"].parse().unwrap();
-                        state.ground_velocity_x = parameter_map["vgx"].parse().unwrap();
-                        state.ground_acceleration_y = parameter_map["vgy"].parse().unwrap();
-                        state.ground_velocity_z = parameter_map["vgz"].parse().unwrap();
-                        state.temperature_minimum = parameter_map["templ"].parse().unwrap();
-                        state.temperature_maximum = parameter_map["temph"].parse().unwrap();
-                        state.tof_value = parameter_map["tof"].parse().unwrap();
-                        state.height = parameter_map["h"].parse().unwrap();
-                        state.battery_percentage = parameter_map["bat"].parse().unwrap();
-                        state.barometer_height = parameter_map["baro"].parse().unwrap();
-                        state.time = parameter_map["time"].parse().unwrap();
-                        state.ground_acceleration_x = parameter_map["agx"].parse().unwrap();
-                        state.ground_acceleration_y = parameter_map["agy"].parse().unwrap();
-                        state.ground_acceleration_z = parameter_map["agz"].parse().unwrap();
+                        Err(_) => {}
                     }
-                    Err(_) => {}
                 }
-
                 std::thread::sleep(Duration::from_millis(50));
             }
         }));
