@@ -193,7 +193,7 @@ impl Tello {
         {
             let mutex = self.command_socket.clone();
             let socket = mutex.lock().unwrap();
-            socket.send_to(command.as_bytes(), "192.168.10.1:8889").map_err(|err| TelloError::IO(err) );
+            socket.send_to(command.as_bytes(), "192.168.10.1:8889").map_err(|err| TelloError::IO(err))?;
         }
 
         if !acked {
