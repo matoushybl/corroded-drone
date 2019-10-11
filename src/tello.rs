@@ -111,8 +111,6 @@ impl Tello {
             while command_running.load(Ordering::SeqCst) {
                 let mut buffer: [u8; 1500] = [0; 1500];
                 let socket = command_socket.lock().unwrap();
-
-                println!("rcvd");
                 let result = socket.recv_from(&mut buffer);
                 match result {
                     Ok((size, _)) => {
