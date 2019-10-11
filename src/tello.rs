@@ -216,11 +216,11 @@ impl Tello {
     }
 
     pub fn take_off(&self) -> Result<usize, TelloError> {
-        self.send_command("takeoff", true)
+        self.send_command("takeoff", false)
     }
 
     pub fn land(&self) -> Result<usize, TelloError> {
-        self.send_command("land", true)
+        self.send_command("land", false)
     }
 
     pub fn stream_on(&self) -> Result<usize, TelloError> {
