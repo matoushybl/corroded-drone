@@ -3,7 +3,7 @@ use std::net::UdpSocket;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Copy, Clone)]
 pub struct State {
@@ -55,6 +55,7 @@ pub struct Tello {
     state_thread: Option<JoinHandle<()>>,
     running: Arc<AtomicBool>,
     state: Arc<Mutex<State>>,
+    drone_acked: Arc<AtomicBool>,
 }
 
 pub enum Flip {
@@ -62,6 +63,12 @@ pub enum Flip {
     Right,
     Forward,
     Backward,
+}
+
+#[derive(Debug)]
+pub enum TelloError {
+    IO(std::io::Error),
+    AckNotReceived
 }
 
 impl Flip {
@@ -90,32 +97,36 @@ impl Tello {
             state_thread: None,
             running: Arc::new(AtomicBool::new(false)),
             state: Arc::new(Mutex::new(State::new())),
+            drone_acked: Arc::new(AtomicBool::new(false)),
         })
     }
 
-    pub fn connect(&mut self) -> Result<usize, std::io::Error> {
+    pub fn connect(&mut self) -> Result<usize, TelloError> {
         self.running.store(true, Ordering::SeqCst);
 
         let command_running = self.running.clone();
         let command_socket = self.command_socket.clone();
+        let command_acked = self.drone_acked.clone();
         self.command_thread = Some(std::thread::spawn(move || {
             while command_running.load(Ordering::SeqCst) {
                 let mut buffer: [u8; 1500] = [0; 1500];
                 let socket = command_socket.lock().unwrap();
 
+                println!("rcvd");
                 let result = socket.recv_from(&mut buffer);
                 match result {
                     Ok((size, _)) => {
-                        let string = std::str::from_utf8(&buffer[..size])
+                        let response = std::str::from_utf8(&buffer[..size])
                             .unwrap_or_default()
                             .trim();
-
-                        println!("drone response: {}", string);
+                        if response == "ok" {
+                            command_acked.store(true, Ordering::SeqCst);
+                        }
                     }
-                    Err(_) => {}
+                    Err(_) => { }
                 }
 
-                std::thread::sleep(Duration::from_millis(50));
+                std::thread::sleep(Duration::from_millis(10));
             }
         }));
 
@@ -169,7 +180,7 @@ impl Tello {
             }
         }));
 
-        self.send_command("command")
+        self.send_command("command", true)
     }
 
     pub fn disconnect(&mut self) {
@@ -178,76 +189,92 @@ impl Tello {
         self.command_thread = None;
     }
 
-    pub fn send_command(&self, command: &str) -> Result<usize, std::io::Error> {
-        let mutex = self.command_socket.clone();
-        let socket = mutex.lock().unwrap();
-        socket.send_to(command.as_bytes(), "192.168.10.1:8889")?;
+    pub fn send_command(&self, command: &str, acked: bool) -> Result<usize, TelloError> {
+        {
+            let mutex = self.command_socket.clone();
+            let socket = mutex.lock().unwrap();
+            socket.send_to(command.as_bytes(), "192.168.10.1:8889").map_err(|err| TelloError::IO(err) );
+        }
 
-        Ok(command.len())
+        if !acked {
+            return Ok(command.len());
+        }
+
+        let sending_acked = self.drone_acked.clone();
+        let now = Instant::now();
+        while now.elapsed() < Duration::from_millis(10000) {
+            if sending_acked.load(Ordering::SeqCst) {
+                sending_acked.store(false, Ordering::SeqCst);
+                return Ok(command.len());
+            }
+
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        Err(TelloError::AckNotReceived)
     }
 
     pub fn get_state(&self) -> State {
         return self.state.clone().lock().unwrap().clone();
     }
 
-    pub fn take_off(&self) -> Result<usize, std::io::Error> {
-        self.send_command("takeoff")
+    pub fn take_off(&self) -> Result<usize, TelloError> {
+        self.send_command("takeoff", true)
     }
 
-    pub fn land(&self) -> Result<usize, std::io::Error> {
-        self.send_command("land")
+    pub fn land(&self) -> Result<usize, TelloError> {
+        self.send_command("land", true)
     }
 
-    pub fn stream_on(&self) -> Result<usize, std::io::Error> {
-        self.send_command("streamon")
+    pub fn stream_on(&self) -> Result<usize, TelloError> {
+        self.send_command("streamon", true)
     }
 
-    pub fn stream_off(&self) -> Result<usize, std::io::Error> {
-        self.send_command("streamoff")
+    pub fn stream_off(&self) -> Result<usize, TelloError> {
+        self.send_command("streamoff", true)
     }
 
-    pub fn emergency(&self) -> Result<usize, std::io::Error> {
-        self.send_command("emergency")
+    pub fn emergency(&self) -> Result<usize, TelloError> {
+        self.send_command("emergency", true)
     }
 
-    pub fn up(&self, distance_cm: u16) -> Result<usize, std::io::Error> {
-        self.send_command(format!("up {}", distance_cm).as_str())
+    pub fn up(&self, distance_cm: u16) -> Result<usize, TelloError> {
+        self.send_command(format!("up {}", distance_cm).as_str(), true)
     }
 
-    pub fn down(&self, distance_cm: u16) -> Result<usize, std::io::Error> {
-        self.send_command(format!("down {}", distance_cm).as_str())
+    pub fn down(&self, distance_cm: u16) -> Result<usize, TelloError> {
+        self.send_command(format!("down {}", distance_cm).as_str(), true)
     }
 
-    pub fn left(&self, distance_cm: u16) -> Result<usize, std::io::Error> {
-        self.send_command(format!("left {}", distance_cm).as_str())
+    pub fn left(&self, distance_cm: u16) -> Result<usize, TelloError> {
+        self.send_command(format!("left {}", distance_cm).as_str(), true)
     }
 
-    pub fn right(&self, distance_cm: u16) -> Result<usize, std::io::Error> {
-        self.send_command(format!("right {}", distance_cm).as_str())
+    pub fn right(&self, distance_cm: u16) -> Result<usize, TelloError> {
+        self.send_command(format!("right {}", distance_cm).as_str(), true)
     }
 
-    pub fn forward(&self, distance_cm: u16) -> Result<usize, std::io::Error> {
-        self.send_command(format!("forward {}", distance_cm).as_str())
+    pub fn forward(&self, distance_cm: u16) -> Result<usize, TelloError> {
+        self.send_command(format!("forward {}", distance_cm).as_str(), true)
     }
 
-    pub fn back(&self, distance_cm: u16) -> Result<usize, std::io::Error> {
-        self.send_command(format!("back {}", distance_cm).as_str())
+    pub fn back(&self, distance_cm: u16) -> Result<usize, TelloError> {
+        self.send_command(format!("back {}", distance_cm).as_str(), true)
     }
 
-    pub fn cw(&self, angle_millidegs: u16) -> Result<usize, std::io::Error> {
-        self.send_command(format!("cw {}", angle_millidegs).as_str())
+    pub fn cw(&self, angle_millidegs: u16) -> Result<usize, TelloError> {
+        self.send_command(format!("cw {}", angle_millidegs).as_str(), true)
     }
 
-    pub fn ccw(&self, angle_millidegs: u16) -> Result<usize, std::io::Error> {
-        self.send_command(format!("ccw {}", angle_millidegs).as_str())
+    pub fn ccw(&self, angle_millidegs: u16) -> Result<usize, TelloError> {
+        self.send_command(format!("ccw {}", angle_millidegs).as_str(), true)
     }
 
-    pub fn flip(&self, flip: Flip) -> Result<usize, std::io::Error> {
-        self.send_command(format!("flip {}", flip.value()).as_str())
+    pub fn flip(&self, flip: Flip) -> Result<usize, TelloError> {
+        self.send_command(format!("flip {}", flip.value()).as_str(), true)
     }
 
-    pub fn go(&self, x_cm: u16, y_cm: u16, z_cm: u16, speed: u8) -> Result<usize, std::io::Error> {
-        self.send_command(format!("go {} {} {} {}", x_cm, y_cm, z_cm, speed).as_str())
+    pub fn go(&self, x_cm: u16, y_cm: u16, z_cm: u16, speed: u8) -> Result<usize, TelloError> {
+        self.send_command(format!("go {} {} {} {}", x_cm, y_cm, z_cm, speed).as_str(), true)
     }
 
     pub fn curve(
@@ -259,13 +286,13 @@ impl Tello {
         y2_cm: u16,
         z2_cm: u16,
         speed: u8,
-    ) -> Result<usize, std::io::Error> {
+    ) -> Result<usize, TelloError> {
         self.send_command(
             format!(
                 "curve {} {} {} {} {} {} {}",
                 x1_cm, y1_cm, z1_cm, x2_cm, y2_cm, z2_cm, speed
             )
-            .as_str(),
+            .as_str(), true
         )
     }
 
@@ -275,17 +302,17 @@ impl Tello {
         forward_backward: i8,
         up_down: i8,
         yaw: i8,
-    ) -> Result<usize, std::io::Error> {
+    ) -> Result<usize, TelloError> {
         self.send_command(
-            format!("rc {} {} {} {}", left_right, forward_backward, up_down, yaw).as_str(),
+            format!("rc {} {} {} {}", left_right, forward_backward, up_down, yaw).as_str(), false
         )
     }
 
-    pub fn speed(&self, speed_cms: u8) -> Result<usize, std::io::Error> {
-        self.send_command(format!("speed {}", speed_cms).as_str())
+    pub fn speed(&self, speed_cms: u8) -> Result<usize, TelloError> {
+        self.send_command(format!("speed {}", speed_cms).as_str(), true)
     }
 
-    pub fn wifi(&self, ssid: &str, password: &str) -> Result<usize, std::io::Error> {
-        self.send_command(format!("wifi {} {}", ssid, password).as_str())
+    pub fn wifi(&self, ssid: &str, password: &str) -> Result<usize, TelloError> {
+        self.send_command(format!("wifi {} {}", ssid, password).as_str(), true)
     }
 }
